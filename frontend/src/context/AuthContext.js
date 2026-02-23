@@ -1,0 +1,135 @@
+import React, {
+  createContext,
+  useState,
+  useContext,
+  useEffect,
+  useCallback
+} from 'react';
+import api from '../services/api';
+
+// Create context
+export const AuthContext = createContext({});
+
+// Custom hook
+export const useAuth = () => useContext(AuthContext);
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // -------- LOGOUT --------
+  const logout = useCallback(() => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    delete api.defaults.headers.common['Authorization'];
+    setUser(null);
+  }, []);
+
+  // -------- FETCH USER --------
+  const fetchUser = useCallback(async () => {
+    try {
+      const response = await api.get('/auth/me');
+
+      if (response?.data?.success) {
+        setUser(response.data.data);
+      } else {
+        logout();
+      }
+    } catch (err) {
+      console.error('Failed to fetch user:', err);
+      logout();
+    } finally {
+      setLoading(false);
+    }
+  }, [logout]);
+
+  // -------- CHECK TOKEN ON LOAD --------
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+
+    if (token) {
+      // Attach token to axios headers
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      fetchUser();
+    } else {
+      setLoading(false);
+    }
+  }, [fetchUser]);
+
+  // -------- LOGIN --------
+  const login = async (email, password, tenantSubdomain) => {
+    try {
+      const response = await api.post('/auth/login', {
+        email,
+        password,
+        tenantSubdomain
+      });
+
+      if (response?.data?.success) {
+        const { token, user } = response.data.data;
+
+        localStorage.setItem('token', token);
+        localStorage.setItem('user', JSON.stringify(user));
+
+        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+
+        setUser(user);
+        setError(null);
+
+        return { success: true };
+      }
+
+      return { success: false, error: 'Invalid credentials' };
+
+    } catch (err) {
+      const message =
+        err.response?.data?.message || 'Login failed';
+
+      setError(message);
+      return { success: false, error: message };
+    }
+  };
+
+  // -------- REGISTER TENANT --------
+  const registerTenant = async (tenantData) => {
+    try {
+      const response = await api.post(
+        '/auth/register-tenant',
+        tenantData
+      );
+
+      if (response?.data?.success) {
+        return { success: true, data: response.data.data };
+      }
+
+      return { success: false, error: 'Registration failed' };
+
+    } catch (err) {
+      return {
+        success: false,
+        error:
+          err.response?.data?.message ||
+          'Registration failed'
+      };
+    }
+  };
+
+  const value = {
+    user,
+    loading,
+    error,
+    login,
+    logout,
+    registerTenant,
+    isAuthenticated: !!user,
+    isSuperAdmin: user?.role === 'super_admin',
+    isTenantAdmin: user?.role === 'tenant_admin'
+  };
+
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
